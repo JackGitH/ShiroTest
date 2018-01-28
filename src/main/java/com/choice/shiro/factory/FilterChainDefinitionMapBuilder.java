@@ -1,13 +1,16 @@
 package com.choice.shiro.factory;
 
+import java.util.Date;
 import java.util.LinkedHashMap;
 
 /**
- * Created by jack on 2017-12-28.
+ * @author  jack
+ * @Created by jack on 2017-12-28.
  */
 public class FilterChainDefinitionMapBuilder {
 
     public LinkedHashMap<String,String>  buildFilterChainDefinitionMap(){
+        Date date  = new Date ();
         LinkedHashMap<String,String> map = new LinkedHashMap<String, String>();
         map.put("/login.jsp","anon");
         map.put("/shiro/login","anon");
