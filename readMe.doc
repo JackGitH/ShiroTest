@@ -1,0 +1,150 @@
+使用shiro步骤
+1 获取当前Subject 调用SecurityUtils.getSubject();
+2 测试当前用户是否已被认证 调用Subject 的isAnthenicated()
+3 若没有被认证  则把用户名和密码封装成UsernamePasswordToken对象
+
+1）创建一个表单页面
+2）请求提交到Spring mvc的handler
+3）获取用户名和密码
+4）执行登录  调用Subject 的Login（参数是AuthenticationToken）方法
+5) 自定义Realm的方法 从数据库中获取 对应的记录  返回给shiro
+ 实际上需要继承package org.apache.shiro.realm.AuthenticatingRealm 类
+ 实现 doGetAuthenticationInfo(AuthenticationToken var1) 这个方法
+6）由shiro完成对密码的比对 是由 CredentialsMatcher来完成比对的，debug模式中，
+   在Realm中的UsernamePasswordToken中加入断点在get密码方法上加入断点，
+   一步一步进入到比对方法。  CredentialsMatcher 有很多方法，其中有加密的方法
+7）如何 把一个字符加密为MD5   替换 Realm 的redentialsMatcher属性即可
+
+ A:
+  为什么使用MD5盐值加密
+　 如何做到：
+ 1）  在doGetAuthenticationInfo 方法中 返回值创建info的时候须要使用SimpleAuthenticationInfo有盐值的构造器
+   2）  使用 ByteSource.Util.bytes("user");方法计算盐值
+   3）  盐值需要唯一 一般使用随机字符串或者user id 来计算盐值之后的值
+
+ B:
+   如何配置多个realm
+   比如 Oracle密码加密是 SHA1    mysql中  是MD5  所以都要验证:
+   1）在ShiroHandler 中  login方法 查看引用下去，会到ModularRealmAuthenticator类的
+     doAuthenticate方法，该方法判断realm是多个还是单个，同时这里边有setRealms方法，该方法
+    传入的是realm的集合。 所以我们配置方法如下：
+     在applicationContext.xml中 配置多个realm，  配置ModularRealmAuthenticator的bean，
+    该bean中 ref 加入配置的多个realm bean。然后放入securityManager中管理。其中由于配
+    ModularRealmAuthenticator中 引用realm的我们自定义存放的是list，所以走权限的时候有
+    先后顺序.（注意ModularRealmAuthenticator中引用的realms  是初始化时，通过set        securityManager中的realms，所以，为了授权方便，我们还是把realms 放在securityManager中）
+    在 ModularRealmAuthenticator中，多个realm方法下的doMultiRealmAuthentication方法是处理多个
+    realm时的方法，其中第一行就是先获取策略：AuthenticationStrategy strategy = this.getAuthenticationStrategy();
+    可以配置三种认证策
+       FirstSuccessfulStrategy-一个成功即可，只返回认证成功的一个realm身份认证信息
+       AtLeastOneSuccessfulStrategy 只要有一个验证成功即可，返回所有认证信息
+       AllSuccessfulStrategy 所有验证成功才可以，返回所有认证信息
+       其中默认的是AtLeastOneSuccessfulStrategy
+      其中如果想验证的话 可以在ShiroRealm中 返回info的方法第一个参数。随便改一个名字，然后
+      在获取策略的地方debug，看返回结果，可以看到不同策略返回值的不同
+
+ C:
+   授权
+   授权的三种方式：
+   1 写代码 if else  调用方法判断
+    if(subject.hasRole("admin")){
+     }else{
+    }
+   2 注解
+    @RequiresRoles("admin")
+    public void hello(){
+    }
+   3 jsp/GSP 标签 通过标签完成
+    <shiro:hashRole name = "admin">
+     有权限
+    </shiro: hashRole>
+
+ 1） 把ModularRealmAuthenticator中的realms  放到securityManager中
+ 2） Shiro内置拦截器 DefaultFliter 是个枚举
+     身份认证相关的： authc authcBasic  logout  user anon
+     授权相关的： roles perms port  rest ssl
+     在 applicationContext.xml中 加上 /view/user.jsp = roles[user]
+                                     /view/admin.jsp = roles[admin]
+     这样类似的roles权限，即可实现对页面的权限控制。 上边这俩代表的
+     user和admin需要登录的用户赋权以后才可以查看
+
+ D： 授权realm的写法
+    1)说明：
+     Shiro的Permissions
+     实例级的访问控制
+     一般是三个部分：域-操作-被付诸实施的实例 如  user:edit:manager
+     也可以使用通配符： user:edit:*   user:*:*    user:*:manager
+     其中 user:edit 等价于user:edit:*
+     而user:edit 并不等价于 user:*:edit
+     多realm授权，只要一个通过，即可授权成功！
+    2）操作
+    1 继承认证realm的AuthenticatingRealm的一个子类 AuthorizingRealm
+      但是不需要实现doGetAuthenticationInfo这个方法，所以认证和授权只需要
+      实现AuthorizingRealm，并且实现他的两个抽象方法即可
+             // 1 获取用户信息
+              Object principal = principalCollection.getPrimaryPrincipal();
+
+              //2 根据用户信息  给用户赋权（可能需要查询数据库）
+              Set<String> roles = new HashSet<String>();
+
+
+              if("admin".equals(principal)){
+                  roles.add("admin");
+              }
+              roles.add("user");
+              //3 创建 SimpleAuthenticationInfo  设置realm属性
+              SimpleAuthorizationInfo info  = new SimpleAuthorizationInfo(roles);
+
+              //4 返回info对象
+              return info;
+
+  E    shiro 标签
+         JSP中可能用到，具体再去查
+         <shiro:guest>
+         <shiro:user>
+         <shiro:authenticated>
+         <shiro:notAuthenticated>
+         <shiro:pincipal>
+         <shiro:hasRole>
+
+
+  F  shiro 权限注解（可以放在controller层和service层）
+         @RequiresAuthentication  表示Subject已经通过login验证 即Subject.isAuthenticated()返回true
+         @RequiresUser 表示 已经身份验证 或者 通过记住我登录的（验证用户是否被记忆，user有两种含义：
+           一种是成功登录的（subject.isAuthenticated() 结果为true;
+           另外一种是被记忆的（subject.isRemembered()结果为true）。）
+         @RequiresGuest  游客登录
+         @RequiresRoles(value={"admin","user"},logical=Logical.AND) 表示Subject需要角色  admin 和 user
+         @RequiresPermissions(value={"user:a","user:b"},logical=Logical.OR) 表示  需要权限  user:a 或者 user:b
+
+
+  G shiro
+    aplication中配置的 filterChainDefinitions  源码中 使用的是filterChainDefinitionMap，通过
+    Debug 发现  这个map是一个linkedHashMap，一般情况下，权限的配置都是从数据库中取出，再配置进去，
+    那么我们就可以新建一个map  方便管理和使用，减少一个一个配置的繁琐操作
+
+  H shiro会话管理相关
+     shiro会话  不依赖于底层容器 不管是 javase  还是 javaee 都可以使用
+     在handler中 使用httpsession  在service层中 使用Subject.getSession  即可得到session
+     并可得到session中的信息，做到了不侵入上层
+     详见代码中，详情请百度
+  I: SessionDao 把session存放到数据库中的api
+     具体层级关系和api详见百度
+     
+
+
+会话验证
+
+
+
+     
+
+
+
+
+
+
+
+
+
+
+

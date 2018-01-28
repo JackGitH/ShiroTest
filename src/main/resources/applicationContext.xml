@@ -1,0 +1,151 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<beans xmlns="http://www.springframework.org/schema/beans"
+       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+       xsi:schemaLocation="http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans.xsd">
+
+   <!-- 1 配置securityManager  最基本的包括缓存控制器，实现了realm接口的-->
+    <bean id ="securityManager" class="org.apache.shiro.web.mgt.DefaultWebSecurityManager">
+        <property name="cacheManager" ref="cacheManager"/>
+        <property name="realm" ref="jdbcRealm"/>
+        <property name="authenticator" ref="authenticator"/>
+        <property name="realms">
+            <list>
+                <ref bean="jdbcRealm"/>
+                <ref bean="secondRealm"/>
+            </list>
+        </property>
+        <property name="rememberMeManager" ref="rememberMeManager"></property>
+        <!--过期时间  秒作为单位-->
+        <!--<property name="rememberMeManager.cookie.maxAge" value="6"></property>-->
+    </bean>
+
+    <!-- remenberMe配置 -->
+    <bean id="rememberMeCookie" class="org.apache.shiro.web.servlet.SimpleCookie">
+        <constructor-arg value="rememberMe" />
+        <property name="httpOnly" value="true" />
+        <!-- 默认记住7天（单位：秒） -->
+        <property name="maxAge" value="10" />
+    </bean>
+    <!-- rememberMe管理器 -->
+    <bean id="rememberMeManager" class="org.apache.shiro.web.mgt.CookieRememberMeManager">
+        <property name="cipherKey" value="#{T(org.apache.shiro.codec.Base64).decode('4AvVhmFLUs0KTA3Kprsdag==')}" />
+        <property name="cookie" ref="rememberMeCookie" />
+    </bean>
+
+    <bean id="authenticator" class="org.apache.shiro.authc.pam.ModularRealmAuthenticator">
+        <property name="authenticationStrategy">
+            <!-- 这里配置的认证方式 可以有三种  这里配置的是AllSuccessfulStrategy这一种-->
+            <bean class="org.apache.shiro.authc.pam.AtLeastOneSuccessfulStrategy"></bean>
+        </property>
+    </bean>
+
+    <!--2 配置ehcache
+        2.1 需要加入ehcache的jar和配置文件-->
+    <bean id="cacheManager" class="org.apache.shiro.cache.ehcache.EhCacheManager">
+        <property name="cacheManagerConfigFile" value="classpath:ehcache.xml"/>
+       <!--还可以配置缓存的名字等信息  这里没有指定-->
+    </bean>
+
+    <!--3 配置realm  可以自己写一个 实现接口
+         3.1 目前用的方法是实现了接口的bean的方法-->
+    <bean id="jdbcRealm" class="com.choice.shiro.realms.ShiroRealm">
+        <property name="credentialsMatcher">
+        <bean class="org.apache.shiro.authc.credential.HashedCredentialsMatcher">
+            <property name="hashAlgorithmName" value="MD5">
+            </property>
+            <property name="hashIterations" value="1024">
+            </property>
+         </bean>
+        </property>
+    </bean>
+
+    <bean id="secondRealm" class="com.choice.shiro.realms.SeconfRealm">
+        <property name="credentialsMatcher">
+            <bean class="org.apache.shiro.authc.credential.HashedCredentialsMatcher">
+                <property name="hashAlgorithmName" value="SHA1">
+                </property>
+                <property name="hashIterations" value="1024">
+                </property>
+            </bean>
+        </property>
+    </bean>
+
+    <bean class="org.apache.shiro.spring.security.interceptor.AuthorizationAttributeSourceAdvisor">
+        <property name="securityManager"  ref="securityManager"/>
+    </bean>
+
+    <!--4 配置生命周期bean后置管理器 可以调用配置在springIOC容器中shirobean的生命周期
+        启用ioc的shiro的注解 必须先配置LifecycleBeanPostProcessor-->
+    <bean id="lifecycleBeanPostProcessor" class="org.apache.shiro.spring.LifecycleBeanPostProcessor"></bean>
+
+    <!--5 aop 生命周期DefaultAdvisorAutoProxyCreator处理，和shiro的核心securityManager交给-AuthorizationAttributeSourceAdvisor处理-->
+
+    <bean  class="org.springframework.aop.framework.autoproxy.DefaultAdvisorAutoProxyCreator" depends-on="lifecycleBeanPostProcessor"></bean>
+
+
+    <!--6 配置shirofilter拦截器
+        6.1 id必须和web.xml文件中配置的DelegatingFilterProxy的filterName一致  不一致 会抛出异常NoSuchBean。。-->
+     <bean id="shiroFilter"  class="org.apache.shiro.spring.web.ShiroFilterFactoryBean">
+         <property name="securityManager" ref="securityManager"/>
+         <property name="loginUrl" value="/view/login.jsp"/>
+         <property name="successUrl" value="/view/list.jsp"/>
+         <property name="unauthorizedUrl" value="/view/unauthorized.jsp"/>
+
+
+         <property name="filterChainDefinitionMap" ref="filterChainDefinitionMap"></property>
+
+         <!-- 1 配置受保护的页面以及访问页面需要的权限
+              anon 代表的是可以被匿名访问
+              authc 必须认证（即登录）
+              2 支持ant模式  支持 ? *  和 ** 三种
+                ? 代表一个字符 * 代表0个或者多个字符
+                ** 代表 0个或多重路径
+              3 url权限  采取第一次匹配优先的方式 即 从头开始使用第一个匹配 url优先的方式拦截器链
+                 即  多个条件从上往下开始，第一个可以覆盖以后的有冲突的多个，顺序很重要
+                logout 代表的是等登出
+              4 roles 角色
+
+              -->
+         <!--
+         <property name="filterChainDefinitions">
+
+             <value>
+
+                 /login.jsp = anon
+                 /shiro/login = anon
+                 /shiro/logout = logout
+
+                 /view/user.jsp = roles[user]
+                 /view/admin.jsp = roles[admin]
+
+
+
+
+                 /** = authc
+
+             </value>
+
+         </property>
+         -->
+     </bean>
+    <!--配置一个bean  该bean就是一个map  通过实例工厂方法创建-->
+    <bean id="filterChainDefinitionMapBuilder" class="com.choice.shiro.factory.FilterChainDefinitionMapBuilder"></bean>
+
+    <bean id="filterChainDefinitionMap" factory-bean="filterChainDefinitionMapBuilder" factory-method="buildFilterChainDefinitionMap"></bean>
+
+    <bean id="shiroService" class="com.choice.shiro.services.ShiroService"></bean>
+
+
+
+
+
+    <bean id="parent" class="com.choice.shiro.Junit.Parent">
+        <property name="name" value="ouyangfeng"/>
+    </bean>
+    <!--下面的parent表示这个child的bean的父亲是id=parent的这个类-->
+    <bean id="child" class="com.choice.shiro.Junit.Child" parent="parent">
+        <property name="age" value="18"/>
+    </bean>
+
+
+</beans>
